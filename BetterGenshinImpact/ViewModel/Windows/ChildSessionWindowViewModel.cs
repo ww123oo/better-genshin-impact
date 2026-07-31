@@ -11,12 +11,14 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using Wpf.Ui.Controls;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxResult = System.Windows.MessageBoxResult;
 
 namespace BetterGenshinImpact.ViewModel.Windows;
 
 public partial class ChildSessionWindowViewModel : ViewModel
 {
-    private const string DesktopHelpUrl = "https://www.bettergi.com/doc.html";
+    private const string DesktopHelpUrl = "https://www.bettergi.com/feats/command/session.html";
 
     private readonly ChildSessionService _childSessionService;
     private readonly DispatcherTimer _notificationTimer;
@@ -62,6 +64,11 @@ public partial class ChildSessionWindowViewModel : ViewModel
     private bool _sendSystemShortcutsToRemote = true;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GameMouseModeButtonText))]
+    [NotifyPropertyChangedFor(nameof(GameMouseModeButtonToolTip))]
+    private bool _isGameMouseModeEnabled;
+
+    [ObservableProperty]
     private bool _isNotificationOpen;
 
     [ObservableProperty]
@@ -81,12 +88,24 @@ public partial class ChildSessionWindowViewModel : ViewModel
 
     public string TopmostButtonToolTip => IsTopmost ? "取消置顶" : "置顶";
 
+    public string GameMouseModeButtonText =>
+        IsGameMouseModeEnabled ? "游戏鼠标" : "普通鼠标";
+
+    public string GameMouseModeButtonToolTip => IsGameMouseModeEnabled
+        ? "桌面分身内的 BetterGI 打开时生效；当前窗口处于焦点时，鼠标将会被锁定在窗口内；按住 Alt 可临时释放鼠标。"
+        : "切换至游戏鼠标模式。桌面分身内的 BetterGI 打开时生效；当前窗口处于前台时，鼠标将会被锁定在窗口内；按住 Alt 可临时释放鼠标。";
+
     public bool HasChildSession => _childSessionService.ChildSessionId is not null;
 
     public ChildSessionWindowViewModel(ChildSessionService childSessionService)
     {
         _childSessionService = childSessionService;
+        _isTopmost = _childSessionService.TopmostEnabled;
+        _isAdaptive = _childSessionService.SmartSizingEnabled;
+        _isOneToOne = !_isAdaptive;
+        _keepAspectRatio = _childSessionService.KeepAspectRatio;
         _sendSystemShortcutsToRemote = _childSessionService.SendSystemShortcutsToRemote;
+        _isGameMouseModeEnabled = _childSessionService.IsGameMouseModeEnabled;
         _notificationTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromSeconds(5)
@@ -112,6 +131,22 @@ public partial class ChildSessionWindowViewModel : ViewModel
     [RelayCommand]
     private async Task StartAsync()
     {
+        if (_childSessionService.ConnectedState != 1
+            && _childSessionService.IsRdpWrapperEnabled())
+        {
+            var result = await ThemedMessageBox.WarningAsync(
+                "检测到系统已安装并启用 RDP Wrapper。\n\n"
+                + "RDP Wrapper 提供了更强大的远程多用户支持，但与当前的桌面分身功能不兼容，"
+                + "可能导致桌面分身无法正常启动。\n\n是否仍要继续？",
+                "RDP Wrapper 兼容性提醒",
+                MessageBoxButton.YesNo,
+                MessageBoxResult.No);
+            if (result != MessageBoxResult.Yes)
+            {
+                return;
+            }
+        }
+
         _startRequested = true;
         IsConnectionPromptVisible = false;
 
@@ -182,7 +217,12 @@ public partial class ChildSessionWindowViewModel : ViewModel
     [RelayCommand]
     private void ToggleKeepAspectRatio()
     {
-        KeepAspectRatio = !KeepAspectRatio;
+        if (!Execute(() => _childSessionService.SetKeepAspectRatio(!KeepAspectRatio)))
+        {
+            return;
+        }
+
+        KeepAspectRatio = _childSessionService.KeepAspectRatio;
     }
 
     [RelayCommand(CanExecute = nameof(CanToggleSendSystemShortcutsToRemote))]
@@ -222,6 +262,25 @@ public partial class ChildSessionWindowViewModel : ViewModel
     }
 
     [RelayCommand]
+    private void ToggleGameMouseMode()
+    {
+        var enabled = !IsGameMouseModeEnabled;
+        if (!Execute(() => _childSessionService.SetGameMouseModeEnabled(enabled)))
+        {
+            IsGameMouseModeEnabled = _childSessionService.IsGameMouseModeEnabled;
+            return;
+        }
+
+        IsGameMouseModeEnabled = _childSessionService.IsGameMouseModeEnabled;
+        ShowNotification(
+            enabled ? "游戏鼠标已开启" : "普通鼠标已开启",
+            enabled
+                ? "桌面分身内的 BetterGI 打开时生效。当前窗口处于焦点时，鼠标将会被锁定在窗口内，按住 Alt 临时释放鼠标。"
+                : "BetterGI 不再向桌面分身转发相对鼠标信息。",
+            enabled ? InfoBarSeverity.Informational : InfoBarSeverity.Success);
+    }
+
+    [RelayCommand]
     private void ShowDesktop()
     {
         Execute(_childSessionService.ShowChildSessionDesktop);
@@ -258,7 +317,12 @@ public partial class ChildSessionWindowViewModel : ViewModel
     [RelayCommand]
     private void ToggleTopmost()
     {
-        IsTopmost = !IsTopmost;
+        if (!Execute(() => _childSessionService.SetTopmost(!IsTopmost)))
+        {
+            return;
+        }
+
+        IsTopmost = _childSessionService.TopmostEnabled;
     }
 
     [RelayCommand]
@@ -375,6 +439,12 @@ public partial class ChildSessionWindowViewModel : ViewModel
     {
         var connectedState = _childSessionService.ConnectedState;
         var childSessionId = _childSessionService.ChildSessionId;
+        IsTopmost = _childSessionService.TopmostEnabled;
+        IsAdaptive = _childSessionService.SmartSizingEnabled;
+        IsOneToOne = !IsAdaptive;
+        KeepAspectRatio = _childSessionService.KeepAspectRatio;
+        SendSystemShortcutsToRemote = _childSessionService.SendSystemShortcutsToRemote;
+        IsGameMouseModeEnabled = _childSessionService.IsGameMouseModeEnabled;
         IsRdpConnected = connectedState == 1;
         IsConnectionPromptVisible = connectedState == 0 && !_startRequested;
 
