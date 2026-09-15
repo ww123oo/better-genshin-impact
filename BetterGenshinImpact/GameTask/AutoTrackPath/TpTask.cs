@@ -83,7 +83,6 @@ public class TpTask
     private const double AbsoluteMapClickNeighborErrorRatio = 0.25d;
     private const double NearbyMapIconTemplateThreshold = 0.65d;
     private const int MapChooseCandidateClickRetryCount = 2;
-    private const int MapChooseCandidateClickDelayMs = 150;  // 点击候选列表后，等待UI变化的时间
     private const int MapChooseCandidateClickVerificationDelayMs = 600;
     private const int MapChooseCandidateClickVerificationIntervalMs = 100;
     private const double TeleportFinalZoomMinNeighborScreenDistance = 96d;
@@ -1249,6 +1248,11 @@ public class TpTask
             catch (TeleportPanelNotOpenedException e)
             {
                 // 同一视野内点击后未出现面板，重试只会重复点击同一位置。
+                
+                // 抛出异常按下 ESC 退出大地图，避免影响后续路径追踪任务
+                Simulation.SendInput.Keyboard.KeyPress(User32.VK.VK_ESCAPE);
+                await Delay(300, ct);
+                
                 throw;
             }
             catch (TpPointNotActivate e)
@@ -1989,6 +1993,7 @@ public class TpTask
             }
         }
 
+        await Delay(60, ct);
         Simulation.SendInput.Mouse.LeftButtonUp();
         var endCursor = GetCursorPositionInCapture();
         return (sentDeltaX, sentDeltaY, steps, startX, startY, endX, endY, endCursor.X - startCursor.X, endCursor.Y - startCursor.Y);
@@ -3498,9 +3503,12 @@ public class TpTask
 
     private async Task ClickMapChooseCandidate(ImageRegion imageRegion, MapChooseCandidate candidate)
     {
+        // 候选列表有个动画，识别到以后一定要再等一会点击
+        var time = TaskContext.Instance().Config.QuickTeleportConfig.TeleportListClickDelay;
+        await Delay(time < 200 ? 200 : time, ct);
         Logger.LogInformation("点击候选列表：{Text}", candidate.Text);
         imageRegion.ClickTo(candidate.ClickRect.X, candidate.ClickRect.Y, candidate.ClickRect.Width, candidate.ClickRect.Height);
-        await Delay(MapChooseCandidateClickDelayMs, ct);
+        await Delay(150, ct);
     }
 
     private static double GetDistance(double x1, double y1, double x2, double y2)
