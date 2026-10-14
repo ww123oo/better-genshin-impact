@@ -1,7 +1,7 @@
+using BetterGenshinImpact.Core.Input;
 using BetterGenshinImpact.Core.Recognition;
 using BetterGenshinImpact.Core.Recognition.OpenCv;
 using BetterGenshinImpact.Core.Script.Dependence;
-using BetterGenshinImpact.Core.Simulator;
 using BetterGenshinImpact.Core.Simulator.Extensions;
 using BetterGenshinImpact.GameTask.AutoGeniusInvokation.Exception;
 using BetterGenshinImpact.GameTask.AutoPathing;
@@ -69,6 +69,8 @@ public class TpTask
     private const double MapDragFastStepRatio = 0.42d;
     private const double MapDragFastDistanceRatio = 0.85d;
     private const double MapClickSafeMargin = 35d;
+    private const double MapUiForbiddenAreaWidth = 360d;
+    private const double MapUiForbiddenAreaHeight = 430d;
     private const double NearbyMapIconPatternMinSearchRadius = 120d;
     private const double NearbyMapIconPatternMaxSearchRadius = 260d;
     private const double NearbyMapIconPatternNeighborDistanceRatio = 1.3d;
@@ -303,7 +305,7 @@ public class TpTask
             };
             var waypointForTrack = new WaypointForTrack(waypoint, nameof(MapTypes.Teyvat), _mapMatchingMethod);
             await new PathExecutor(ct).MoveTo(waypointForTrack);
-            Simulation.SendInput.SimulateAction(GIActions.Drop);
+            InputHub.Foreground.SimulateAction(GIActions.Drop);
         }
 
         await Delay((int)(_tpConfig.HpRestoreDuration * 1000), ct);
@@ -371,7 +373,7 @@ public class TpTask
             try
             {
                 // 打开地图前释放所有按键
-                Simulation.ReleaseAllKey();
+                InputHub.ReleaseAll();
                 await Delay(GetTeleportOperationDelay(20), ct);
                 await CheckInBigMapUi(mapName);
                 return;
@@ -1090,8 +1092,9 @@ public class TpTask
         var requiredRadius = Math.Max(0, requiredVisibleRadius);
         var edgeMargin = safeMargin + requiredRadius;
 
-        // 屏蔽左上角360x400区域；如果需要识别周围图标，则把目标点周围的可见半径也让出来。
-        if (clickX < 360 * _zoomOutMax1080PRatio + requiredRadius && clickY < 400 * _zoomOutMax1080PRatio + requiredRadius)
+        // 屏蔽左上角 UI 遮挡区域；如果需要识别周围图标，则把目标点周围的可见半径也让出来。
+        if (clickX < MapUiForbiddenAreaWidth * _zoomOutMax1080PRatio + requiredRadius
+            && clickY < MapUiForbiddenAreaHeight * _zoomOutMax1080PRatio + requiredRadius)
         {
             return false;
         }
@@ -1194,7 +1197,7 @@ public class TpTask
             return true;
         }
 
-        Simulation.SendInput.SimulateAction(GIActions.OpenMap);
+        InputHub.Foreground.SimulateAction(GIActions.OpenMap);
         await Delay(100, ct);
         var opened = await WaitForBigMapUiAppear(GetBigMapOpenTimeoutMilliseconds(mapName));
         return opened;
@@ -1250,7 +1253,7 @@ public class TpTask
                 // 同一视野内点击后未出现面板，重试只会重复点击同一位置。
                 
                 // 抛出异常按下 ESC 退出大地图，避免影响后续路径追踪任务
-                Simulation.SendInput.Keyboard.KeyPress(User32.VK.VK_ESCAPE);
+                InputHub.Foreground.Keyboard.KeyPress(User32.VK.VK_ESCAPE);
                 await Delay(300, ct);
                 
                 throw;
@@ -1259,7 +1262,7 @@ public class TpTask
             {
                 // 未激活点位的详情面板会遮挡后续地图操作，重试前先关闭。
                 // 最后一次失败也需要执行清理，避免影响脚本组中的下一个任务。
-                Simulation.SendInput.Keyboard.KeyPress(User32.VK.VK_ESCAPE);
+                InputHub.Foreground.Keyboard.KeyPress(User32.VK.VK_ESCAPE);
                 await Delay(300, ct);
                 // throw; // 不抛出异常，继续重试
                 Logger.LogWarning(e.Message + "  重试");
@@ -1736,7 +1739,7 @@ public class TpTask
         var singleWheelNotch = Math.Sign(wheelNotches);
         for (var i = 0; i < Math.Abs(wheelNotches); i++)
         {
-            Simulation.SendInput.Mouse.VerticalScroll(singleWheelNotch);
+            InputHub.Foreground.Mouse.VerticalScroll(singleWheelNotch);
             if (i + 1 < Math.Abs(wheelNotches))
             {
                 await Delay(GetTeleportOperationDelay(MapZoomWheelBurstIntervalMs), ct);
@@ -1909,8 +1912,8 @@ public class TpTask
             double dragRatioByX = expectedDeltaX == 0 ? 1 : availableX / Math.Abs(expectedDeltaX);
             double dragRatioByY = expectedDeltaY == 0 ? 1 : availableY / Math.Abs(expectedDeltaY);
             double dragRatio = Math.Min(1, Math.Min(dragRatioByX, dragRatioByY));
-            double forbiddenWidth = 360d * scale;
-            double forbiddenHeight = 400d * scale;
+            double forbiddenWidth = MapUiForbiddenAreaWidth * scale;
+            double forbiddenHeight = MapUiForbiddenAreaHeight * scale;
             double avoidPadding = Math.Max(4d, 6d * scale);
 
             for (var attempt = 0; attempt < 12; attempt++)
@@ -1974,7 +1977,7 @@ public class TpTask
         int[] stepX = GenerateSteps(sentDeltaX, steps);
         int[] stepY = GenerateSteps(sentDeltaY, steps);
         var startCursor = GetCursorPositionInCapture();
-        Simulation.SendInput.Mouse.LeftButtonDown();
+        InputHub.Foreground.Mouse.LeftButtonDown();
         int movedX = 0;
         int movedY = 0;
         for (var i = 0; i < steps; i++)
@@ -1994,7 +1997,7 @@ public class TpTask
         }
 
         await Delay(60, ct);
-        Simulation.SendInput.Mouse.LeftButtonUp();
+        InputHub.Foreground.Mouse.LeftButtonUp();
         var endCursor = GetCursorPositionInCapture();
         return (sentDeltaX, sentDeltaY, steps, startX, startY, endX, endY, endCursor.X - startCursor.X, endCursor.Y - startCursor.Y);
     }
@@ -2744,7 +2747,7 @@ public class TpTask
 
     private async Task PressTeleportConfirmKey()
     {
-        Simulation.SendInput.Keyboard.KeyPress(User32.VK.VK_F);
+        InputHub.Foreground.Keyboard.KeyPress(User32.VK.VK_F);
         await Delay(30, ct);
     }
 
@@ -2825,7 +2828,7 @@ public class TpTask
             return false;
         }
 
-        return !(x < 360 * _zoomOutMax1080PRatio && y < 400 * _zoomOutMax1080PRatio);
+        return !(x < MapUiForbiddenAreaWidth * _zoomOutMax1080PRatio && y < MapUiForbiddenAreaHeight * _zoomOutMax1080PRatio);
     }
 
     private double GetNearbyMapIconPatternSearchRadius(double nearestNeighborScreenDistance = double.NaN)
